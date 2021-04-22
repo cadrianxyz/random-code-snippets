@@ -1,0 +1,36 @@
+let doc = document.createElement("script");
+const PDF_NAME = "downloaded"
+ 
+doc.onload = function () {
+ 
+    const pdf = new jsPDF();
+    const elements = document.getElementsByTagName("img");
+    
+    // last image is empty
+    
+    
+    for (let i in elements) {
+        const img = elements[i];
+        console.log("found image: ", img);
+
+        if (!/^blob:/.test(img.src)) {
+            console.log("invalid image src");
+            continue;
+        }
+ 
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext("2d");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        context.drawImage(img, 0, 0, img.width, img.height);
+
+        const base64data = canvas.toDataURL("image/jpeg", 1.0);
+        pdf.addImage(base64data, 'JPEG', 0, 0);
+        pdf.addPage();
+    }
+ 
+    pdf.save(`${PDF_NAME}.pdf`);
+};
+ 
+doc.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/1.5.3/jspdf.debug.js';
+document.body.appendChild(doc);
