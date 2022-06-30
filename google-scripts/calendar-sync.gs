@@ -81,7 +81,7 @@ function createEventDescription(event) {
       finalText += `  Invitation: ${attendee.responseStatus}\n`
     });
   }
-  if (event.description.length) finalText += `<b>Description<b/>:\n${event.description}`;
+  if (event.description && event.description.length) finalText += `<b>Description<b/>:\n${event.description}`;
   return finalText;
 }
 
