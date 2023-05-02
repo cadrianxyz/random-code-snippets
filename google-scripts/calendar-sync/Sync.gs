@@ -1,7 +1,7 @@
 // Helpful google calendar docs: https://developers.google.com/apps-script/reference/calendar/calendar-app
 
 const CALENDAR_MERGE_FROM = 'cadrian.dev@gmail.com';
-const CALENDAR_MERGE_INTO = 'ufjco5hnsrtegl9bgrbd085b1o@group.calendar.google.com';
+const CALENDAR_MERGE_INTO = 'CALENDAR_ID'
 const ENDPOINT_BASE = 'https://www.googleapis.com/calendar/v3/calendars';
 
 const SYNC_DAYS_IN_PAST = 7;
@@ -11,6 +11,9 @@ const SYNC_DAYS_IN_FUTURE = 30;
 const CHARACTER_SYMBOL_DUPLICATE = '';
 const CHARACTER_SYMBOL_IGNORE = /^.*(personal commitment$)|(flight$)/gi;
 // Unique characters to use in event copying
+
+const ERROR_COLOR_ID = 11;
+// test using "colorTest.gs"
 
 
 function Sync() {
@@ -22,11 +25,7 @@ function Sync() {
   endTime.setHours(0, 0, 0, 0); // Midnight
   endTime.setDate(endTime.getDate() + SYNC_DAYS_IN_FUTURE + 1);
 
-  const deleteStartTime = new Date();
-  deleteStartTime.setFullYear(2000, 01, 01);
-  deleteStartTime.setHours(0, 0, 0, 0);
-
-  deleteExistingEvents(deleteStartTime, endTime);
+  deleteExistingEvents(startTime, endTime);
   copyEvents(startTime, endTime);
 }
 
@@ -69,20 +68,57 @@ function deleteExistingEvents(startTime, endTime) {
 
 function createEventDescription(event) {
   let finalText = '';
-  console.log(event.organizer);
-  if (event.organizer) finalText += `<b>Event Organizer<b/>: ${event.organizer.displayName} (${event.organizer.email}\n`;
+  // Get organizer Details
+  if (event.organizer) {
+    let displayName = "Unknown";
+    if (event.organizer.self) displayName = "You";
+    else if (event.organizer.displayName?.length) displayName = event.organizer.displayName
+    finalText += `<b>Event Organizer</b>: ${displayName} (${event.organizer.email})\n`;
+  }
   else finalText += 'Event Organizer: Unknown\n';
+
+  // Get Conference Details
+  if (event.conferenceData) {
+    let confType = "Google Meets/Hangouts";
+    if (event.conferenceData.conferenceSolution?.name) confType = event.conferenceData.conferenceSolution.name;
+
+    finalText += `\n<b>Conference Type: ${confType}</b>\n`;
+    event.conferenceData.entryPoints.forEach((ep) => {
+      finalText += `&#x2022;  <b><a href="${ep.uri}">${ep.entryPointType ?? "Link"}</a></b>: ${ep.uri}`;
+      if (ep.pin) finalText += ` (PIN: ${ep.pin})`;
+      finalText += "\n"
+    })
+  }
+
+  // Get Attendee Details
   if (event.attendees?.length) {
-    finalText += '<b>Guests/Attendees<b/>:\n';
+    finalText += '\n<b>Guests/Attendees</b>:\n';
     event.attendees.forEach((attendee) => {
       if (attendee.self) return;
       if (attendee.displayName?.length) finalText += `- ${attendee.displayName} (${attendee.email})\n`;
-      else finalText += `- ${attendee.email}\n`;
-      finalText += `  Invitation: ${attendee.responseStatus}\n`
+      else finalText += `&#x2022;  <a href="mailto:${attendee.email}">${attendee.email}</a>\n`;
+      if (attendee.responseStatus == "accepted") {
+        finalText += `   Invitation: <u>${attendee.responseStatus}</u>\n`
+      }
+      else {
+        finalText += `   Invitation: ${attendee.responseStatus}\n`
+      }
     });
   }
-  if (event.description && event.description.length) finalText += `<b>Description<b/>:\n${event.description}`;
+
+  // Get rest of description
+  if (event.description && event.description.length) finalText += `\n<b>Description</b>:\n${event.description}`;
   return finalText;
+}
+
+// get bool result indicating if you accepted the invite
+function getInviteStatus(event) {
+  if (!event.attendees?.length) return true;
+  event.attendees.forEach((attendee) => {
+    if (attendee.self) return attendee.responseStatus == "accepted";
+  });
+
+  return false;
 }
 
 function copyEvents(startTime, endTime) {
@@ -110,16 +146,25 @@ function copyEvents(startTime, endTime) {
 
     console.log(event)
 
+    let isNotAccepted = !getInviteStatus(event);
+    let prefix = "";
+    if (isNotAccepted) prefix += "[RESPONSE REQUIRED] "
+    prefix += CHARACTER_SYMBOL_DUPLICATE;
+
     requestBody.push({
       method: 'POST',
       endpoint: `${ENDPOINT_BASE}/${CALENDAR_MERGE_INTO}/events`,
       requestBody: {
-        summary: `${CHARACTER_SYMBOL_DUPLICATE}${event.summary}`,
+        summary: `${prefix}${event.summary}`,
         location: event.location,
         description: createEventDescription(event),
         start: event.start,
         end: event.end,
+        colorId: isNotAccepted ? ERROR_COLOR_ID : event.colorId,
+        eventType: 'default',
+
       },
+      // requestBody: { ...event },
     });
   });
 
