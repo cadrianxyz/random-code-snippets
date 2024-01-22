@@ -1,32 +1,56 @@
+// Heavily copied from https://github.com/karbassi/sync-multiple-google-calendars
 // Helpful google calendar docs: https://developers.google.com/apps-script/reference/calendar/calendar-app
 
-const CALENDAR_MERGE_FROM = 'cadrian.dev@gmail.com';
-const CALENDAR_MERGE_INTO = 'CALENDAR_ID'
-const ENDPOINT_BASE = 'https://www.googleapis.com/calendar/v3/calendars';
+// copy all non-reclaim events to the "meetings" calendar
+// "meetings" calendar will be shared with main calendar
 
+const CALENDAR_MERGE_FROM = '<ENTER_HERE>@group.calendar.google.com';
+const CALENDAR_MERGE_INTO = '<ENTER_HERE>@group.calendar.google.com';
+
+const SYNC_INTERVAL_DAYS = 40;
 const SYNC_DAYS_IN_PAST = 7;
-const SYNC_DAYS_IN_FUTURE = 30;
+const SYNC_DAYS_IN_FUTURE = 180;
 
 // Unique characters to use in event deletion. For identifying duplicates, use https://unicode-table.com/en/200B/ if needed.
 const CHARACTER_SYMBOL_DUPLICATE = '';
-const CHARACTER_SYMBOL_IGNORE = /^.*(personal commitment$)|(flight$)/gi;
+const CHARACTER_SYMBOL_IGNORE = /^.*?(busy$)|(personal commitment$)|(unconfirmed commitment$)|(flight$)/gi;
 // Unique characters to use in event copying
 
-const ERROR_COLOR_ID = 11;
-// test using "colorTest.gs"
+const ALERT_COLOR = 6; // test using "colorTest.gs"
 
+function SyncCommitments() {
+  console.log('Synchronizing Events from Main Calendar to "Star" (Support) Calendar');
+  const alpha = new Date();
+  alpha.setHours(0, 0, 0, 0); // Midnight
+  alpha.setDate(alpha.getDate() - SYNC_DAYS_IN_PAST);
 
-function Sync() {
-  const startTime = new Date();
-  startTime.setHours(0, 0, 0, 0); // Midnight
-  startTime.setDate(startTime.getDate() - SYNC_DAYS_IN_PAST);
+  const omega = new Date();
+  omega.setHours(0, 0, 0, 0); // Midnight
+  omega.setDate(omega.getDate() + SYNC_DAYS_IN_FUTURE + 1);
 
-  const endTime = new Date();
-  endTime.setHours(0, 0, 0, 0); // Midnight
-  endTime.setDate(endTime.getDate() + SYNC_DAYS_IN_FUTURE + 1);
+  deleteExistingEvents(alpha, omega);
 
-  deleteExistingEvents(startTime, endTime);
-  copyEvents(startTime, endTime);
+  let startTime = new Date(alpha);
+  let endTime = new Date(alpha);
+
+  // sync for past events first
+  if (SYNC_DAYS_IN_PAST > 0) {
+    copyEvents(startTime, endTime);
+    startTime.setDate(startTime.getDate() + SYNC_DAYS_IN_PAST);
+  }
+
+  // sync future events in increments (spaces of time, to avoid errors in large bulk processing)
+  while (endTime <= omega) {
+    startTime = new Date(endTime);
+    endTime.setDate(endTime.getDate() + SYNC_INTERVAL_DAYS);
+
+    if (endTime > omega) {
+      copyEvents(startTime, omega);
+    }
+    else {
+      copyEvents(startTime, endTime);
+    }
+  }
 }
 
 function deleteExistingEvents(startTime, endTime) {
@@ -49,7 +73,6 @@ function deleteExistingEvents(startTime, endTime) {
   }));
 
   if (requestBody && requestBody.length) {
-    // Refer to implementation in https://github.com/tanaikech/BatchRequest
     const result = new BatchRequest({
       useFetchAll: true,
       batchPath: 'batch/calendar/v3',
@@ -112,18 +135,27 @@ function createEventDescription(event) {
 }
 
 // get bool result indicating if you accepted the invite
+// return statuses:
+//    -1 - invidation decline
+//    0 - invitation not responded to
+//    1 - invitation replied with. "maybe"
+//    2 - invitation accepted
+//    3 - not an invitation, accepted
 function getInviteStatus(event) {
-  if (!event.attendees?.length) return true;
-  event.attendees.forEach((attendee) => {
-    if (attendee.self) return attendee.responseStatus == "accepted";
-  });
+  if (!event.attendees?.length) return 3;
+  for (let i = 0; i < event.attendees.length; i++) {
+    let attendee = event.attendees[i]
+    if (attendee.self && attendee.responseStatus == "declined") return -1;
+    if (attendee.self && attendee.responseStatus == "accepted") return 2;
+    if (attendee.self && attendee.responseStatus == "tentative") return 1;
+  }
 
-  return false;
+  return 0;
 }
 
 function copyEvents(startTime, endTime) {
+  console.log(`--> copying events\n    from ${startTime}\n    to ${endTime}`);
   const requestBody = [];
-  const calendarToCopy = CalendarApp.getCalendarById(CALENDAR_MERGE_FROM);
 
   // Find events
   const events = Calendar.Events.list(CALENDAR_MERGE_FROM, {
@@ -144,12 +176,23 @@ function copyEvents(startTime, endTime) {
       return;
     }
 
-    console.log(event)
+    let isAcceptedIndex = 2;
+    if (new Date(event.start.dateTime).valueOf() >= (new Date()).valueOf()) {
+      isAcceptedIndex = getInviteStatus(event);
+    }
+    // skip if event is declined
+    if (isAcceptedIndex === -1) return;
 
-    let isNotAccepted = !getInviteStatus(event);
     let prefix = "";
-    if (isNotAccepted) prefix += "[RESPONSE REQUIRED] "
+    if (isAcceptedIndex === 0) prefix += "[RESPONSE REQUIRED] "
+    if (isAcceptedIndex === 1) prefix += "[TENTATIVE] "
     prefix += CHARACTER_SYMBOL_DUPLICATE;
+
+    // console.log(`## ${event.summary} ${event.start} -- ${isAcceptedIndex}`)
+
+    let finalTransparency = 'opaque';
+    if (event.transparency && event.transparency === 'transparent') finalTransparency  = 'transparent';
+    if (isAcceptedIndex < 2) finalTransparency  = 'transparent';
 
     requestBody.push({
       method: 'POST',
@@ -160,11 +203,11 @@ function copyEvents(startTime, endTime) {
         description: createEventDescription(event),
         start: event.start,
         end: event.end,
-        colorId: isNotAccepted ? ERROR_COLOR_ID : event.colorId,
+        colorId: isAcceptedIndex <= 0 ? ALERT_COLOR : event.colorId,
         eventType: 'default',
-
+        transparency: finalTransparency,
+        visibility: event.visibility,
       },
-      // requestBody: { ...event },
     });
   });
 
