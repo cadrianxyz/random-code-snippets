@@ -172,14 +172,13 @@ function copyEvents(startTime, endTime) {
     // }
 
     // Ignore events that have the following
-    if (event.summary.match(CHARACTER_SYMBOL_IGNORE)) {
+    if (event.summary && event.summary.match(CHARACTER_SYMBOL_IGNORE)) {
       return;
     }
 
     let isAcceptedIndex = 2;
-    if (new Date(event.start.dateTime).valueOf() >= (new Date()).valueOf()) {
-      isAcceptedIndex = getInviteStatus(event);
-    }
+    // if (new Date(event.start.dateTime).valueOf() >= (new Date()).valueOf()) {}
+    isAcceptedIndex = getInviteStatus(event);
     // skip if event is declined
     if (isAcceptedIndex === -1) return;
 
