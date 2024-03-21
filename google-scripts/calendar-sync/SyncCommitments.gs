@@ -143,6 +143,7 @@ function createEventDescription(event) {
 //    3 - not an invitation, accepted
 function getInviteStatus(event) {
   if (!event.attendees?.length) return 3;
+  if (event.organizer.self) return 3;
   for (let i = 0; i < event.attendees.length; i++) {
     let attendee = event.attendees[i]
     if (attendee.self && attendee.responseStatus == "declined") return -1;
