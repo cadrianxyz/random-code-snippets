@@ -5,8 +5,8 @@ const CALENDAR_MAIN = '<CALENDAR_MERGE_FROM>@group.calendar.google.com';
 const CALENDAR_STAR = '<CALENDAR_MERGE_INTO>@group.calendar.google.com';
 
 const SYNC_INTERVAL_DAYS = 40;
-const SYNC_DAYS_IN_PAST = 7;
-const SYNC_DAYS_IN_FUTURE = 180;
+let SYNC_DAYS_IN_PAST = 7;
+let SYNC_DAYS_IN_FUTURE = 180;
 
 const SYNC_BUSY_DAYS_IN_PAST = 7;
 const SYNC_BUSY_DAYS_IN_FUTURE = 90;

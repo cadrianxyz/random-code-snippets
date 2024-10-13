@@ -1,24 +1,8 @@
-// Heavily copied from https://github.com/karbassi/sync-multiple-google-calendars
-// Helpful google calendar docs: https://developers.google.com/apps-script/reference/calendar/calendar-app
-
-// copy all non-reclaim events to the "meetings" calendar
-// "meetings" calendar will be shared with main calendar
-
-const CALENDAR_MERGE_FROM = '<ENTER_HERE>@group.calendar.google.com';
-const CALENDAR_MERGE_INTO = '<ENTER_HERE>@group.calendar.google.com';
-
-const SYNC_INTERVAL_DAYS = 40;
-const SYNC_DAYS_IN_PAST = 7;
-const SYNC_DAYS_IN_FUTURE = 180;
-
-// Unique characters to use in event deletion. For identifying duplicates, use https://unicode-table.com/en/200B/ if needed.
-const CHARACTER_SYMBOL_DUPLICATE = '';
-const CHARACTER_SYMBOL_IGNORE = /^.*?(busy$)|(personal commitment$)|(unconfirmed commitment$)|(flight$)/gi;
-// Unique characters to use in event copying
-
+// The 'SyncToStar' function should be able to be used across all different calendars.
+// AGNOSTIC and CUSTOMIZABLE.
 const ALERT_COLOR = 6; // test using "colorTest.gs"
 
-function SyncCommitments() {
+function SyncToStar() {
   console.log('Synchronizing Events from Main Calendar to "Star" (Support) Calendar');
   const alpha = new Date();
   alpha.setHours(0, 0, 0, 0); // Midnight
@@ -54,7 +38,7 @@ function SyncCommitments() {
 }
 
 function deleteExistingEvents(startTime, endTime) {
-  const existingCalendar = CalendarApp.getCalendarById(CALENDAR_MERGE_INTO);
+  const existingCalendar = CalendarApp.getCalendarById(CALENDAR_STAR);
   let existingEvents;
   if (CHARACTER_SYMBOL_DUPLICATE) {
     existingEvents = existingCalendar
@@ -67,7 +51,7 @@ function deleteExistingEvents(startTime, endTime) {
 
   const requestBody = existingEvents.map((e, i) => ({
     method: 'DELETE',
-    endpoint: `${ENDPOINT_BASE}/${CALENDAR_MERGE_INTO}/events/${e
+    endpoint: `${ENDPOINT_BASE}/${CALENDAR_STAR}/events/${e
       .getId()
       .replace('@google.com', '')}`,
   }));
@@ -80,6 +64,7 @@ function deleteExistingEvents(startTime, endTime) {
     });
 
     if (result.length !== requestBody.length) {
+      console.log('Did not delete properly.... I think. See below.');
       console.log(result);
     }
 
@@ -113,53 +98,21 @@ function createEventDescription(event) {
     })
   }
 
-  // Get Attendee Details
-  if (event.attendees?.length) {
-    finalText += '\n<b>Guests/Attendees</b>:\n';
-    event.attendees.forEach((attendee) => {
-      if (attendee.self) return;
-      if (attendee.displayName?.length) finalText += `- ${attendee.displayName} (${attendee.email})\n`;
-      else finalText += `&#x2022;  <a href="mailto:${attendee.email}">${attendee.email}</a>\n`;
-      if (attendee.responseStatus == "accepted") {
-        finalText += `   Invitation: <u>${attendee.responseStatus}</u>\n`
-      }
-      else {
-        finalText += `   Invitation: ${attendee.responseStatus}\n`
-      }
-    });
-  }
-
   // Get rest of description
   if (event.description && event.description.length) finalText += `\n<b>Description</b>:\n${event.description}`;
   return finalText;
 }
 
-// get bool result indicating if you accepted the invite
-// return statuses:
-//    -1 - invidation decline
-//    0 - invitation not responded to
-//    1 - invitation replied with. "maybe"
-//    2 - invitation accepted
-//    3 - not an invitation, accepted
-function getInviteStatus(event) {
-  if (!event.attendees?.length) return 3;
-  if (event.organizer.self) return 3;
-  for (let i = 0; i < event.attendees.length; i++) {
-    let attendee = event.attendees[i]
-    if (attendee.self && attendee.responseStatus == "declined") return -1;
-    if (attendee.self && attendee.responseStatus == "accepted") return 2;
-    if (attendee.self && attendee.responseStatus == "tentative") return 1;
-  }
-
-  return 0;
-}
+const ALL_DAY_REGEX = new RegExp('^\d{4}\-(0[1-9]|1[012])\-(0[1-9]|[12][0-9]|3[01])$');
 
 function copyEvents(startTime, endTime) {
   console.log(`--> copying events\n    from ${startTime}\n    to ${endTime}`);
   const requestBody = [];
 
+  const calendar = CalendarApp.getCalendarById(CALENDAR_MAIN)
+
   // Find events
-  const events = Calendar.Events.list(CALENDAR_MERGE_FROM, {
+  const events = Calendar.Events.list(CALENDAR_MAIN, {
     timeMin: startTime.toISOString(),
     timeMax: endTime.toISOString(),
     singleEvents: true,
@@ -167,44 +120,67 @@ function copyEvents(startTime, endTime) {
   });
 
   events.items.forEach((event) => {
-    // Prevent copying "free" events.
-    // if (event.transparency && event.transparency === 'transparent') {
-    //   return;
-    // }
+    // Prevent copying events that have the ignored character symbol
+    if (event.summary && event.summary.match(CHARACTER_SYMBOL_IGNORE)) return;
 
-    // Ignore events that have the following
-    if (event.summary && event.summary.match(CHARACTER_SYMBOL_IGNORE)) {
-      return;
-    }
+    // Prevent copying events that match one of the ignored event types
+    if (IGNORED_EVENT_TYPES.includes(event.eventType)) return;
+    
+    // Prevent copying "free" events if specified
+    let isEventAvailabilityFree = false;
+    if (event.transparency && event.transparency === 'transparent') isEventAvailabilityFree = true;
+    if (isEventAvailabilityFree && IGNORE_FREE_EVENTS) return;
 
+    // Prevent copying "private" events if specified
+    let isEventPrivate = false;
+    if (event.visibility === 'private' || event.visibility === 'confidential') isEventPrivate = true;
+    if (isEventPrivate && IGNORE_PRIVATE_EVENTS) return;
+
+    // Prevent copying "full day" events if specified
+    const isAllDayEvent = event.start.date != null || ALL_DAY_REGEX.test(event.start.date);
+    if (isAllDayEvent && IGNORE_ALLDAY_EVENTS) return;
+
+    // Determine if event is an invitation from another calendar
+    // Retreive an "event index" that we will use to identify the event later on
     let isAcceptedIndex = 2;
-    // if (new Date(event.start.dateTime).valueOf() >= (new Date()).valueOf()) {}
     isAcceptedIndex = getInviteStatus(event);
-    // skip if event is declined
-    if (isAcceptedIndex === -1) return;
 
+    // Prevent copying "DECLINED" events if specified
+    if (isAcceptedIndex == -1 && IGNORE_DECLINED_EVENTS) return;
+    // Prevent copying "NOT ACCEPTED" events if specified (need response)
+    if (isAcceptedIndex == 0 && IGNORE_UNACCEPTED_EVENTS) return;
+    // Prevent copying "TENTATIVE" events if specified
+    if (isAcceptedIndex == 1 && IGNORE_TENTATIVE_EVENTS) return;
+
+    // Create Prefix
     let prefix = "";
-    if (isAcceptedIndex === 0) prefix += "[RESPONSE REQUIRED] "
-    if (isAcceptedIndex === 1) prefix += "[TENTATIVE] "
     prefix += CHARACTER_SYMBOL_DUPLICATE;
+
+    if (isAcceptedIndex === -1) prefix += "[DECLINED] "
+    else if (isAcceptedIndex === 0) prefix += "[RESPONSE REQUIRED] "
+    else if (isAcceptedIndex === 1) prefix += "[TENTATIVE] "
 
     // console.log(`## ${event.summary} ${event.start} -- ${isAcceptedIndex}`)
 
+    // Determine event transparency
     let finalTransparency = 'opaque';
-    if (event.transparency && event.transparency === 'transparent') finalTransparency  = 'transparent';
-    if (isAcceptedIndex < 2) finalTransparency  = 'transparent';
+    if (event.transparency) finalTransparency = event.transparency;
+    if (isEventAvailabilityFree) finalTransparency  = 'transparent';
+    
+    if (isAcceptedIndex < MINIMUM_EVENT_ACCEPTANCE_TO_SHOW_BUSY) finalTransparency  = 'transparent';
+    if (isAllDayEvent && FREE_UP_ALLDAY_EVENTS) finalTransparency  = 'transparent';
 
     requestBody.push({
       method: 'POST',
-      endpoint: `${ENDPOINT_BASE}/${CALENDAR_MERGE_INTO}/events`,
+      endpoint: `${ENDPOINT_BASE}/${CALENDAR_STAR}/events`,
       requestBody: {
         summary: `${prefix}${event.summary}`,
         location: event.location,
         description: createEventDescription(event),
         start: event.start,
         end: event.end,
-        colorId: isAcceptedIndex <= 0 ? ALERT_COLOR : event.colorId,
-        eventType: 'default',
+        colorId: isAcceptedIndex === 0 ? ALERT_COLOR : event.colorId,
+        eventType: event.eventType,
         transparency: finalTransparency,
         visibility: event.visibility,
       },
