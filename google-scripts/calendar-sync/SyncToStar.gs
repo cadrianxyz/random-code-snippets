@@ -12,10 +12,20 @@ function SyncToStar() {
   omega.setHours(0, 0, 0, 0); // Midnight
   omega.setDate(omega.getDate() + SYNC_DAYS_IN_FUTURE + 1);
 
-  deleteExistingEvents(alpha, omega);
+  const delete_alpha = new Date(alpha);
+  delete_alpha.setDate(delete_alpha.getDate() - DELETE_EXTRA_DAYS_IN_PAST);
+  const delete_omega = new Date(omega);
+  delete_omega.setDate(delete_omega.getDate() + DELETE_EXTRA_DAYS_IN_FUTURE);
+
+  console.log(`-- deleting for ${delete_alpha.toLocaleDateString()} to ${delete_omega.toLocaleDateString()}`)
+  console.log(`-- syncing for ${alpha.toLocaleDateString()} to ${omega.toLocaleDateString()}`)
+
+  // do the delete
+
+  deleteExistingEvents(delete_alpha, delete_omega);
 
   let startTime = new Date(alpha);
-  let endTime = new Date(alpha);
+  let endTime = new Date(); // now
 
   // sync for past events first
   if (SYNC_DAYS_IN_PAST > 0) {
