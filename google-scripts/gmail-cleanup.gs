@@ -5,6 +5,7 @@ function cleanupUpdates() {
       from: "abc@123.com",  // use email or contact name
       subject_texts: "",    // [optional] use for filtering by subject name
       older_than_d: 7       // use for filtering by how old the email is (in days)
+    }
   ]
 
   const setupPartialQuery = (key, input, unit = false) => {
